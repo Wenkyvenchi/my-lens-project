@@ -3,103 +3,267 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Mobile Magic Lens</title>
+    <title>DUST ALGO - INTEGRATED FIELD</title>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; touch-action: none; }
-        body, html { width: 100%; height: 100%; overflow: hidden; background: #f0f2f5; }
+        :root { --accent: rgba(255, 255, 255, 0.4); }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
+        canvas { display: block; width: 100%; height: 100%; }
 
-        .world { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; }
-
-        /* 主世界：亮色 */
-        .main-world {
-            background-color: #ffffff;
-            background-image: radial-gradient(#d1d1d1 1px, transparent 1px);
-            background-size: 30px 30px;
+        /* UI 系统 */
+        #ui-layer { position: absolute; top: 20px; left: 20px; pointer-events: none; color: var(--accent); font-size: 10px; text-transform: uppercase; line-height: 1.4; z-index: 10; }
+        .highlight { color: #fff; text-shadow: 0 0 8px #fff; font-weight: bold; margin-bottom: 5px; }
+        
+        /* 交互按钮 */
+        #btn-translate {
+            position: absolute; bottom: 30px; right: 30px;
+            border: 1px solid #fff; color: #fff; padding: 10px 15px;
+            font-size: 12px; cursor: pointer; z-index: 20;
+            background: rgba(0,0,0,0.5); backdrop-filter: blur(5px);
         }
 
-        /* 里世界：暗色 */
-        .linked-world {
-            background-color: #000;
-            background-image: radial-gradient(#333 1px, transparent 1px);
-            background-size: 30px 30px;
+        /* 人类翻译界面 */
+        #human-interface {
+            position: fixed; inset: 0; background: #fff; color: #000;
+            display: none; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 100; padding: 20px; text-align: center;
+        }
+        #clock { font-size: 48px; font-weight: 200; margin-bottom: 20px; letter-spacing: -1px; }
+        #pseudo-data { font-size: 12px; line-height: 2; border-top: 1px solid #eee; padding-top: 20px; width: 80%; max-width: 300px; }
+        #btn-back {
+            margin-top: 40px; width: 50px; height: 50px; border-radius: 50%;
+            background: #000; color: #fff; border: none; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; font-size: 20px;
         }
 
-        /* 居中物体 */
-        .object {
-            position: absolute; top: 50%; left: 50%;
-            width: 120px; height: 120px; margin: -60px;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 40px; border-radius: 20px;
-        }
-        .main-world .object { background: #eee; border: 2px solid #333; color: #333; }
-        .linked-world .object { background: #1a1a1a; border: 2px solid #00ffcc; color: #00ffcc; box-shadow: 0 0 20px #00ffcc; }
-
-        /* 手机端透视窗 */
-        .floating-window {
-            position: absolute; top: 0; left: 0;
-            width: 200px; height: 200px; /* 手机端默认窗口小一点 */
-            border-radius: 50%; /* 手机上做成圆形透镜更有feel */
-            border: 3px solid #555;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-            overflow: hidden;
-            z-index: 100;
-            display: none;
+        /* 过渡黑屏 */
+        #overlay {
+            position: fixed; inset: 0; background: #000; opacity: 0;
+            pointer-events: none; transition: opacity 0.8s ease; z-index: 50;
         }
 
-        #showBtn {
-            position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
-            padding: 15px 40px; border-radius: 30px; border: none;
-            background: #333; color: #fff; font-size: 18px; z-index: 200;
+        /* 故障效果 */
+        .glitch-active #human-interface { display: flex; animation: glitch-anim 0.2s linear; }
+        @keyframes glitch-anim {
+            0% { transform: translate(2px, -2px); filter: invert(1); }
+            50% { transform: translate(-2px, 2px); }
+            100% { transform: translate(0); filter: invert(0); }
         }
     </style>
 </head>
 <body>
 
-    <div class="world main-world">
-        <div class="object">⚪</div>
+<div id="ui-layer">
+    <div class="highlight">> DUST_ALGO_CORE_V26</div>
+    <div id="algo-log">IDLE...</div>
+    <div id="algo-stats"></div>
+</div>
+
+<div id="btn-translate">TRANSLATE FOR HUMAN</div>
+
+<div id="human-interface">
+    <div id="clock">00:00:00</div>
+    <div id="pseudo-data">
+        PARTICLE_DENSITY: <span id="val-den">--</span><br>
+        FLOW_VELOCITY: <span id="val-flo">--</span><br>
+        EXT_SOURCE: <span id="val-src">--</span>
     </div>
+    <button id="btn-back">✕</button>
+</div>
 
-    <button id="showBtn">开启透视</button>
+<div id="overlay"></div>
+<canvas id="canvas"></canvas>
 
-    <div id="floatingWindow" class="floating-window">
-        <div id="linkedWorld" class="world linked-world">
-            <div class="object">💠</div>
-        </div>
-    </div>
+<script>
+/**
+ * 灰尘算法全集成版
+ */
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { alpha: false });
+const overlay = document.getElementById('overlay');
+const uiLog = document.getElementById('algo-log');
+const uiStats = document.getElementById('algo-stats');
 
-    <script>
-        const win = document.getElementById('floatingWindow');
-        const world = document.getElementById('linkedWorld');
-        const btn = document.getElementById('showBtn');
+let width, height, dpr;
+let currentMode = 0; // 0: Chora Field, 1: Meditative Probe
+let modeTimer = 0;
+const MODE_DURATION = 15000; // 15秒切换一次
 
-        let x = window.innerWidth / 2 - 100;
-        let y = window.innerHeight / 2 - 100;
+const PARTICLE_COUNT = 50000;
+const px = new Float32Array(PARTICLE_COUNT);
+const py = new Float32Array(PARTICLE_COUNT);
+const pz = new Float32Array(PARTICLE_COUNT);
+const pb = new Float32Array(PARTICLE_COUNT);
 
-        function update() {
-            win.style.transform = `translate(${x}px, ${y}px)`;
-            world.style.transform = `translate(${-x}px, ${-y}px)`;
+// 模式0特有变量 (Field)
+let pulse = { x: 0, y: 0, z: 0, r: 0 };
+let camAngle = 0;
+
+// 模式1特有变量 (Probe)
+let planeNormal = { x: 0, y: 1, z: 0 };
+let planeDist = -4000;
+
+function init() {
+    dpr = window.devicePixelRatio || 1;
+    width = canvas.width = window.innerWidth * dpr;
+    height = canvas.height = window.innerHeight * dpr;
+    
+    // 初始化粒子云
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+        resetParticle(i);
+    }
+    resetPulse();
+    startNewScan();
+}
+
+function resetParticle(i) {
+    const range = 2000;
+    px[i] = (Math.random() - 0.5) * range;
+    py[i] = (Math.random() - 0.5) * range;
+    pz[i] = (Math.random() - 0.5) * range;
+    pb[i] = 0;
+}
+
+// --- 模式逻辑 ---
+
+function resetPulse() {
+    pulse.x = (Math.random() - 0.5) * 1000;
+    pulse.y = (Math.random() - 0.5) * 1000;
+    pulse.z = (Math.random() - 0.5) * 1000;
+    pulse.r = 0;
+}
+
+function startNewScan() {
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos((Math.random() * 2) - 1);
+    planeNormal.x = Math.sin(phi) * Math.cos(theta);
+    planeNormal.y = Math.sin(phi) * Math.sin(theta);
+    planeNormal.z = Math.cos(phi);
+    planeDist = -3000;
+}
+
+function update() {
+    const now = Date.now();
+    
+    // 自动切换模式逻辑
+    if (now - modeTimer > MODE_DURATION) {
+        overlay.style.opacity = 1;
+        setTimeout(() => {
+            currentMode = (currentMode + 1) % 2;
+            overlay.style.opacity = 0;
+            modeTimer = Date.now();
+        }, 800);
+        modeTimer = now + 2000; // 避免重复触发
+    }
+
+    if (currentMode === 0) {
+        // Field Algo
+        camAngle += 0.003;
+        pulse.r += 15;
+        if (pulse.r > 3000) resetPulse();
+
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            px[i] += (Math.random() - 0.5) * 2;
+            py[i] += (Math.random() - 0.5) * 2;
+            pz[i] += (Math.random() - 0.5) * 2;
+            
+            const dx = px[i] - pulse.x;
+            const dy = py[i] - pulse.y;
+            const dz = pz[i] - pulse.z;
+            const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+            
+            if (Math.abs(d - pulse.r) < 50) pb[i] = 1.0;
+            else pb[i] *= 0.9;
         }
+    } else {
+        // Probe Algo
+        planeDist += 20;
+        if (planeDist > 3000) startNewScan();
+        camAngle += 0.001;
 
-        btn.onclick = () => {
-            win.style.display = 'block';
-            btn.style.display = 'none';
-            update();
-        };
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const dot = px[i] * planeNormal.x + py[i] * planeNormal.y + pz[i] * planeNormal.z;
+            if (Math.abs(dot - planeDist) < 100) pb[i] = 1.0;
+            else pb[i] *= 0.85;
+        }
+    }
+}
 
-        // 触摸拖动逻辑
-        win.addEventListener('touchstart', (e) => {
-            const touch = e.touches[0];
-            offsetY = touch.clientY - y;
-            offsetX = touch.clientX - x;
-        });
+function render() {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, width, height);
 
-        win.addEventListener('touchmove', (e) => {
-            const touch = e.touches[0];
-            x = touch.clientX - offsetX;
-            y = touch.clientY - offsetY;
-            update();
-            e.preventDefault(); // 防止页面滚动
-        }, { passive: false });
-    </script>
+    const cx = width / 2;
+    const cy = height / 2;
+    const fl = 800;
+    const cosA = Math.cos(camAngle);
+    const sinA = Math.sin(camAngle);
+
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+        if (pb[i] < 0.05) continue;
+
+        // 旋转变换
+        const rx = px[i] * cosA - pz[i] * sinA;
+        const rz = px[i] * sinA + pz[i] * cosA;
+        const ry = py[i];
+
+        const z = rz + 2500;
+        if (z <= 100) continue;
+
+        const scale = fl / z;
+        const x = cx + rx * scale;
+        const y = cy + ry * scale;
+
+        const size = pb[i] * scale * 3 * dpr;
+        const alpha = pb[i] * (scale * 1.2);
+        
+        ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+        ctx.fillRect(x, y, size, size);
+    }
+}
+
+// --- 交互与人类界面 ---
+
+function updateClock() {
+    const d = new Date();
+    document.getElementById('clock').innerText = d.toTimeString().split(' ')[0];
+    document.getElementById('val-den').innerText = (Math.random() * 0.5 + 0.1).toFixed(4) + " mg/m³";
+    document.getElementById('val-flo').innerText = (Math.random() * 5 + 2).toFixed(2) + " m/s";
+    document.getElementById('val-src').innerText = Math.random() > 0.5 ? "ATMOSPHERIC_DRIFT" : "INTERIOR_STATIC";
+}
+
+document.getElementById('btn-translate').addEventListener('click', () => {
+    document.body.classList.add('glitch-active');
+    setTimeout(() => {
+        document.getElementById('human-interface').style.display = 'flex';
+        updateClock();
+    }, 150);
+});
+
+document.getElementById('btn-back').addEventListener('click', () => {
+    document.getElementById('human-interface').style.display = 'none';
+    document.body.classList.remove('glitch-active');
+});
+
+// UI 数据流模拟
+const logMsgs = ["CALIBRATING_VOXEL", "SCANNING_CHÔRA", "PREDICTING_DRIFT", "NEURAL_MAPPING", "VOID_RECOVERY"];
+setInterval(() => {
+    uiLog.innerText = "> " + logMsgs[Math.floor(Math.random() * logMsgs.length)];
+    uiStats.innerHTML = `SCAN_VEL: ${(Math.random()*100).toFixed(2)} GB/S<br>STABILITY: 0.999${Math.floor(Math.random()*9)}`;
+}, 2000);
+
+setInterval(updateClock, 1000);
+
+function loop() {
+    update();
+    render();
+    requestAnimationFrame(loop);
+}
+
+window.addEventListener('resize', init);
+init();
+modeTimer = Date.now();
+loop();
+
+</script>
 </body>
 </html>
