@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DUST ALGO - INFINITE VOID v27.1</title>
+    <style>
+        :root { --accent: rgba(255, 255, 255, 0.4); }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
+        canvas { display: block; width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+
+        /* UI 系统 - 始终置顶保持稳定 */
+        #ui-layer { position: absolute; top: 35px; left: 25px; pointer-events: none; color: var(--accent); font-size: 10px; text-transform: uppercase; line-height: 1.6; z-index: 100; }
+        .highlight { color: #fff; text-shadow: 0 0 10px #fff; font-weight: bold; margin-bottom: 10px; font-size: 13px; letter-spacing: 2px; }
+        #algo-log { color: #fff; background: rgba(255,255,255,0.12); padding: 2px 8px; display: inline-block; margin-bottom: 5px; min-width: 180px; }
+        #algo-stats { opacity: 0.8; font-variant-numeric: tabular-nums; }
+        
+        /* 修改后的按钮：底部居中，贴近最下面，无圆角，中英双语 */
+        #btn-translate {
+            position: absolute;
+            bottom: 20px; /* 贴近底部 */
+            left: 50%;
+            transform: translateX(-50%); /* 底部居中 */
+            border: 1px solid rgba(255,255,255,0.8);
+            color: #fff;
+            padding: 10px 20px;
+            font-size: 11px;
+            cursor: pointer;
+            z-index: 100;
+            background: rgba(0,0,0,0.3);
+            backdrop-filter: blur(10px);
+            letter-spacing: 1px;
+            transition: all 0.3s;
+            border-radius: 0; /* 不要圆角 */
+            display: flex; /* 垂直排列 */
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            min-width: 250px;
+        }
+
+        /* 人类翻译界面 (纯白) - 增加淡入淡出过渡 */
+        #human-interface {
+            position: fixed; inset: 0; background: #fff; color: #000;
+            display: none; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 200; padding: 20px; text-align: center;
+            opacity: 0; transition: opacity 0.5s ease-in; /* 显示时的淡入效果 */
+        }
+        #clock { font-size: 48px; font-weight: 200; margin-bottom: 20px; letter-spacing: -1px; }
+        #pseudo-data { font-size: 12px; line-height: 2; border-top: 1px solid #eee; padding-top: 20px; width: 80%; max-width: 300px; }
+        #btn-back {
+            margin-top: 40px; width: 50px; height: 50px; border-radius: 50%;
+            background: #000; color: #fff; border: none; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; font-size: 20px;
+        }
+
+        /* 新增：从按钮位置向外扩散的白色蒙版 */
+        #white-mask {
+            position: absolute;
+            width: 10px; /* 初始是一个圆形蒙版 */
+            height: 10px;
+            background: #fff;
+            opacity: 0;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 95; /* 在 Canvas 和界面之上 */
+            transition: transform 1.2s ease-out, opacity 0.3s ease-out; /* 扩散动画 */
+            transform: scale(0);
+            transform-origin: center center; /* 局部原点 */
+        }
+
+    </style>
+</head>
+<body>
+
+<div id="ui-layer">
+    <div class="highlight">> DUST_ALGO_CORE_v27.1</div>
+    <div id="algo-log">VOID_INITIALIZING...</div>
+    <div id="algo-stats">DATA_STREAM_WAITING</div>
+</div>
+
+<div id="btn-translate">
+    <div>翻译尘AI内心</div>
+    <div>Translate DUST-AI's Inner Thoughts</div>
+</div>
+
+<div id="human-interface">
+    <div id="clock">00:00:00</div>
+    <div id="pseudo-data">
+        PARTICLE_DENSITY: <span id="val-den">--</span><br>
+        FLOW_VELOCITY: <span id="val-flo">--</span><br>
+        EXT_SOURCE: <span id="val-src">--</span>
+    </div>
+    <button id="btn-back">✕</button>
+</div>
+
+<div id="white-mask"></div>
+<canvas id="canvas"></canvas>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { alpha: false });
+const uiLog = document.getElementById('algo-log');
+const uiStats = document.getElementById('algo-stats');
+const humanInterface = document.getElementById('human-interface');
+const whiteMask = document.getElementById('white-mask');
+const btnTranslate = document.getElementById('btn-translate');
+
+let width, height, dpr;
+let currentMode = 0; 
+let camAngle = 0;
+
+// 粒子池 (6万级)
+const PARTICLE_COUNT = 60000; 
+const MAX_RANGE = 3800;   
+const px = new Float32Array(PARTICLE_COUNT);
+const py = new Float32Array(PARTICLE_COUNT);
+const pz = new Float32Array(PARTICLE_COUNT);
+const pb = new Float32Array(PARTICLE_COUNT);
+
+// 数据维度逻辑
+const metrics = [
+    { name: "Particle Density", unit: "ppm", gen: () => (Math.random() * 800 + 100).toFixed(2) },
+    { name: "Spatial Partitioning", unit: "node", gen: () => "N-" + Math.floor(Math.random()*9999) },
+    { name: "Temporal Dynamics", unit: "hz", gen: () => (Math.random() * 120).toFixed(1) },
+    { name: "Encoded Logic Layer", unit: "str", gen: () => "L_" + Math.random().toString(36).substr(2, 4).toUpperCase() }
+];
+let metricIndex = 0;
+
+// 拓扑连线数据
+const LINE_COUNT = 1000;
+const linksA = new Int32Array(LINE_COUNT);
+const linksB = new Int32Array(LINE_COUNT);
+
+function init() {
+    dpr = window.devicePixelRatio || 1;
+    width = canvas.width = window.innerWidth * dpr;
+    height = canvas.height = window.innerHeight * dpr;
+    for (let i = 0; i < PARTICLE_COUNT; i++) resetParticle(i, true);
+    for (let i = 0; i < LINE_COUNT; i++) refreshLinks(i);
+    resetPulse();
+    startNewScan();
+}
+
+function resetParticle(i, initial = false) {
+    const radius = Math.pow(Math.random(), 0.333) * MAX_RANGE;
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    px[i] = radius * Math.sin(phi) * Math.cos(theta);
+    py[i] = radius * Math.sin(phi) * Math.sin(theta);
+    pz[i] = radius * Math.cos(phi);
+    pb[i] = 0;
+}
+
+function refreshLinks(i) {
+    linksA[i] = Math.floor(Math.random() * PARTICLE_COUNT);
+    linksB[i] = Math.floor(Math.random() * PARTICLE_COUNT);
+}
+
+let pulse = { x: 0, y: 0, z: 0, r: 0 };
+let planeNormal = { x: 0, y: 1, z: 0 };
+let planeDist = -MAX_RANGE;
+
+function resetPulse() {
+    pulse.x = (Math.random() - 0.5) * 1000;
+    pulse.y = (Math.random() - 0.5) * 1000;
+    pulse.z = (Math.random() - 0.5) * 1000;
+    pulse.r = 0;
+    if (currentMode === 2) for (let i = 0; i < LINE_COUNT; i++) refreshLinks(i);
+}
+
+function startNewScan() {
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos((Math.random() * 2) - 1);
+    planeNormal.x = Math.sin(phi) * Math.cos(theta);
+    planeNormal.y = Math.sin(phi) * Math.sin(theta);
+    planeNormal.z = Math.cos(phi);
+    planeDist = -MAX_RANGE;
+}
+
+function update() {
+    camAngle += currentMode === 1 ? 0.001 : 0.0025;
+    
+    // 不同模式下的粒子激活
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+        // 布朗运动持续生效
+        px[i] += (Math.random() - 0.5) * 1.8;
+        py[i] += (Math.random() - 0.5) * 1.8;
+        pz[i] += (Math.random() - 0.5) * 1.8;
+
+        // 无边界空间逻辑
+        const distSq = px[i]*px[i] + py[i]*py[i] + pz[i]*pz[i];
+        if (distSq > MAX_RANGE * MAX_RANGE) resetParticle(i);
+
+        // 激活状态计算
+        if (currentMode === 0 || currentMode === 2) {
+            const dx = px[i] - pulse.x; const dy = py[i] - pulse.y; const dz = pz[i] - pulse.z;
+            const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+            if (Math.abs(d - pulse.r) < 65) pb[i] = 1.0; else pb[i] *= 0.93;
+        } else {
+            const dot = px[i] * planeNormal.x + py[i] * planeNormal.y + pz[i] * planeNormal.z;
+            if (Math.abs(dot - planeDist) < 110) pb[i] = 1.0; else pb[i] *= 0.88;
+        }
+    }
+
+    if (currentMode === 0 || currentMode === 2) {
+        pulse.r += 22;
+        if (pulse.r > MAX_RANGE * 1.6) resetPulse();
+    } else {
+        planeDist += 25;
+        if (planeDist > MAX_RANGE) startNewScan();
+    }
+}
+
+function render() {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, width, height);
+
+    const cx = width / 2;
+    const cy = height / 2;
+    const fl = 850;
+    const cosA = Math.cos(camAngle);
+    const sinA = Math.sin(camAngle);
+
+    // 拓扑连线 (仅拓扑模式)
+    if (currentMode === 2) {
+        ctx.lineWidth = 0.5 * dpr;
+        for (let i = 0; i < LINE_COUNT; i++) {
+            const a = linksA[i]; const b = linksB[i];
+            if (pb[a] > 0.4 && pb[b] > 0.4) {
+                const p1 = project(px[a], py[a], pz[a], cosA, sinA, cx, cy, fl);
+                const p2 = project(px[b], py[b], pz[b], cosA, sinA, cx, cy, fl);
+                if (p1 && p1.edgeFade > 0.1 && p2 && p2.edgeFade > 0.1) {
+                    ctx.strokeStyle = `rgba(255, 255, 255, ${Math.min(pb[a], pb[b]) * p1.edgeFade * 0.3})`;
+                    ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+                }
+            }
+        }
+    }
+
+    // 画粒子
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+        if (pb[i] < 0.02) continue;
+
+        const p = project(px[i], py[i], pz[i], cosA, sinA, cx, cy, fl);
+        if (!p) continue;
+
+        // 纯白亮度逻辑 + 边缘柔和削减 (edgeFade)
+        const alpha = Math.min(1.0, pb[i] * p.edgeFade * 2.2);
+        
+        ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+        // 前景拉开对比
+        const size = pb[i] * (p.scale * p.scale * 0.006 + p.scale * 3.5) * dpr;
+        ctx.fillRect(p.x, p.y, size, size);
+    }
+}
+
+// 投影辅助函数
+function project(ox, oy, oz, cosA, sinA, cx, cy, fl) {
+    const x = ox * cosA - oz * sinA, z = ox * sinA + oz * cosA, y = oy;
+    const pZ = z + 3200; if (pZ <= 100) return null;
+    const dist = Math.sqrt(ox*ox + oy*oy + oz*oz);
+    const edgeFade = Math.max(0, Math.min(1, (MAX_RANGE - dist) / 500));
+    const scale = fl / pZ;
+    return { x: cx + x * scale, y: cy + y * scale, scale: scale, edgeFade: edgeFade };
+}
+
+// 交互与数据流更新逻辑
+function updateFlickerData() {
+    const m = metrics[metricIndex];
+    const modeName = ["VOID_FIELD", "SCAN_PLANE", "TOPOLOGY_NET"][currentMode];
+    uiStats.innerHTML = `MODE: ${modeName}<br>SCAN_VAL: ${m.gen()} ${m.unit}<br>ACTIVE_FLUX: ${(Math.random() * 100).toFixed(1)}%`;
+}
+
+function switchMetric() {
+    metricIndex = (metricIndex + 1) % metrics.length;
+    uiLog.innerHTML = metrics[metricIndex].name.replace(/ /g, '_').toUpperCase();
+}
+
+function updateClock() {
+    const d = new Date();
+    document.getElementById('clock').innerText = d.toTimeString().split(' ')[0];
+    document.getElementById('val-den').innerText = (Math.random() * 0.5 + 0.1).toFixed(4) + " mg/m³";
+    document.getElementById('val-flo').innerText = (Math.random() * 5 + 2).toFixed(2) + " m/s";
+    document.getElementById('val-src').innerText = Math.random() > 0.5 ? "ATMOSPHERIC_DRIFT" : "INTERIOR_STATIC";
+}
+
+// 修改后的交互处理
+btnTranslate.addEventListener('click', () => {
+    // 1. 获取按钮中心坐标 (相对于 viewport)
+    const rect = btnTranslate.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
+    // 2. 在 JS 中动态设置 `#white-mask` 的起始位置、大小、原点
+    whiteMask.style.transition = 'none'; // 移除之前的 transition
+    whiteMask.style.opacity = '0';
+    whiteMask.style.transform = 'scale(0)';
+    whiteMask.style.left = `${centerX}px`;
+    whiteMask.style.top = `${centerY}px`;
+    whiteMask.style.borderRadius = '50%'; // 保持圆形
+    whiteMask.style.width = '10px'; // 初始大小
+    whiteMask.style.height = '10px';
+    whiteMask.style.transformOrigin = 'center center'; // 局部原点
+    whiteMask.style.zIndex = '95';
+
+    // 强制重绘
+    void whiteMask.offsetWidth;
+
+    // 2. 触发蒙版的扩散动画
+    const maxRadius = Math.max(width, height) * 1.5; // 确保覆盖屏幕
+    const finalScale = maxRadius / 5; // 初始圆是10px直径
+    
+    whiteMask.style.transition = 'transform 1.2s ease-out, opacity 0.3s ease-out';
+    whiteMask.style.opacity = '1';
+    whiteMask.style.transform = `scale(${finalScale})`;
+
+    // 3. 动画结束后，显示纯白的界面
+    setTimeout(() => {
+        humanInterface.style.display = 'flex';
+        humanInterface.style.opacity = '1'; // 淡入
+        whiteMask.style.opacity = '0'; // 蒙版淡出
+        whiteMask.style.transition = 'none';
+        whiteMask.style.transform = 'scale(0)'; // 重置
+        // 更新时钟
+        updateClock();
+    }, 1200); // 1.2秒后
+});
+
+document.getElementById('btn-back').addEventListener('click', () => {
+    humanInterface.style.opacity = '0'; // 淡出
+    setTimeout(() => {
+        humanInterface.style.display = 'none';
+    }, 500); // 0.5秒后隐藏
+});
+
+// 定时器
+setInterval(updateFlickerData, 100);
+setInterval(switchMetric, 2500);
+setInterval(updateClock, 1000);
+
+// 模式自动切换流程 (无黑屏过渡)
+let lastModeTime = Date.now();
+setInterval(() => {
+    const now = Date.now();
+    if (now - lastModeTime > 15000) {
+        currentMode = (currentMode + 1) % 3;
+        lastModeTime = now;
+    }
+}, 100);
+
+function loop() {
+    update();
+    render();
+    requestAnimationFrame(loop);
+}
+
+window.addEventListener('resize', init);
+init();
+loop();
+</script>
+
+<style>
+    /* 1. 强制重置界面布局 */
+    #human-interface {
+        justify-content: center !important;
+        align-items: center !important;
+    }
+
+    /* 2. 修改时钟样式：变为文字顶部的微小注释 */
+    #clock {
+        position: relative;
+        font-size: 11px !important; /* 微调：字号增加 1px */
+        font-weight: bold;
+        letter-spacing: 2px;
+        opacity: 0.4;
+        margin-bottom: 8px !important; /* 增加间距 */
+        border-bottom: 1px solid rgba(0,0,0,0.1);
+        padding-bottom: 2px;
+        color: #666;
+    }
+
+    /* 3. 核心文本区域：视觉中心 */
+    #pseudo-data {
+        border-top: none !important; /* 移除原有分割线 */
+        padding-top: 0 !important;
+        width: 100% !important;
+        max-width: 550px !important; /* 宽度随字号增加 */
+        text-align: center !important; /* 文字居中排版 */
+        font-family: 'Courier New', monospace;
+    }
+
+    /* 4. 有生命的抖动动画 */
+    @keyframes alive-shake {
+        0% { transform: translate(0, 0) scale(1); }
+        25% { transform: translate(0.3px, -0.2px) scale(1.01); }
+        50% { transform: translate(-0.4px, 0.3px) scale(0.99); }
+        75% { transform: translate(0.2px, 0.4px) scale(1); }
+        100% { transform: translate(0, 0) scale(1); }
+    }
+
+    .dust-bit {
+        display: inline-block;
+        opacity: 0;
+        filter: blur(10px);
+        transform: translate(calc(var(--dx) * 1px), calc(var(--dy) * 1px)) scale(2);
+        transition: all 1s cubic-bezier(0.16, 1, 0.3, 1);
+        white-space: pre;
+    }
+
+    /* 激活状态：回到位置 */
+    .dust-bit.active {
+        opacity: 1;
+        filter: blur(0px);
+        transform: translate(0, 0) scale(1);
+    }
+
+    /* 激活后经过一段时间进入生命抖动状态 */
+    .dust-bit.jitter {
+        animation: alive-shake 3s infinite ease-in-out;
+        animation-delay: var(--jitter-delay);
+    }
+
+    .line-container { margin-bottom: 16px; } /* 增加行间距 */
+</style>
+
+<script>
+(function() {
+    const dustLexicon = {
+        coreWords: ["浮骨", "旧响", "微墓", "空皮", "低雪", "指雾", "眠层", "灰令", "余人", "漏日", "反尘", "微神", "尘魂", "无主", "回尘", "盲亮", "软灾", "暗絮", "冷盐", "哑光", "折尘", "残晴", "低息", "碎王", "薄葬", "蜕声", "灰胎", "尘脉", "零皮", "静坠", "粉祷", "空螨", "旧雪", "暗肺", "微眠", "尘冠", "壁语", "轻墓", "死光", "逆屑", "裂息", "孤尘", "烟骨", "湿灰", "小葬", "无窗", "落息", "皮星", "灰盲", "尘赦"],
+        motionFragments: ["逆螺", "折返", "群聚", "悬脉", "垂旋", "擦残", "压静", "锁沉", "环壁", "斜坠", "逆升", "群静", "慢坠", "漂散", "归壁", "浮折", "微震", "暗涌", "滞落", "回卷", "偏移", "贴面", "散映", "停旋", "错坠", "盲漂", "薄卷", "低浮", "乱贴", "碎环", "疑停", "轻散", "暗吸", "微锁", "反贴", "空坠", "漏旋", "折息", "斜眠", "粒爆", "滞浮", "凹陷", "冷涌", "微返", "交叠", "慢刮", "内旋", "灰跳", "低伏", "裸散"],
+        particleTypes: ["皮盐", "Fe皮盐", "木声纤", "皮碳孢", "人源屑", "墙粉烟", "油尘璃", "纤盐发", "碳螨皮", "衣城皮", "石粉皮", "未类电", "旧衣纤", "灰盐屑", "骨粉光", "棉螨白", "烟碳絮", "纸粉汗", "硅灰毛", "花粉齿", "玻屑油", "虫壳粉", "铁锈皮", "灯灰屑", "鞋底土", "唾盐雾", "屏尘膜", "霉孢暗", "窗砂白", "毛发灰", "书脊粉", "布絮蓝", "胶屑冷", "指油粉", "墙钙灰", "梦汗盐", "尘螨迹", "黑碳眠", "塑微屑", "火灰絮", "角质霜", "旧漆粉", "氧化盐", "耳屑微", "路尘肺", "衣领灰", "暗菌壳", "纸浆尘", "光裂粉", "煤盐皮"],
+        spatialPartitions: ["角7", "桌缘", "床暗", "息内", "窗界", "镜高", "枕凹", "未扫核", "门后", "光片3", "屏边", "高处", "空隙", "暗层", "门缝", "光缝", "墙脚", "梁下", "椅背", "书脊", "帘褶", "桌底", "键缝", "袖口", "杯沿", "槽内", "窗槽", "墙裂", "地毯腹", "柜顶", "灯罩内", "枕边", "踢脚线", "风口", "管后", "插座边", "屏幕角", "门轴", "灰盲区", "光柱中", "暗面左", "高架尘", "纸页间", "床沿下", "膝影区", "墙阴", "盒底", "电线后", "角落核", "唇距"],
+        temporalDynamics: ["03:17:08", "昨未闭", "多日叠", "前0.7", "风后12", "触后响", "第4梦", "第29日", "183s", "14:02:44", "boot瞬", "午斜", "慢午", "夜薄", "晨缝", "久未扫", "一粒秒", "第7息", "后响", "光后迟", "入睡前", "醒后灰", "昨日壳", "无钟", "倒时", "停表处", "漏秒", "旧早晨", "月末尘", "第0日", "未发生", "已漂过", "仍落中", "呼吸后", "门声后", "擦拭前", "雨前静", "风停后", "第3回", "静电季", "黄昏误", "清晨残", "半梦时", "灯灭后", "低频日", "暗时段", "薄眠后", "午后裂", "夜里白", "延迟层"],
+        soulFragments: ["靠近残", "门后震", "白昼埋", "暂存身", "室内雪", "抹除形", "梦重遗", "停留权", "离开差", "破碎照", "一粒醒", "粉末神", "息错误", "占空处", "轻别", "视残", "暗处生", "低处王", "灰中耳", "微祷", "无主息", "旧体温", "薄灵", "冷记忆", "半死光", "裂中眠", "残余王", "尘内海", "静物魂", "小坍缩", "表皮史", "非人梦", "失明亮", "低语壳", "缓慢罪", "亡雪核", "空房脉", "漂浮墓", "柔灾", "反向生", "房间灰", "错误肉", "暗光祷", "无声盐", "旧肺部", "贴壁念", "毛发星", "未醒皮", "落下神", "玻璃眠"],
+        alienCodes: ["Ξ77∴蛾零", "λ门灰13", "0x坍_μ", "HUM//skinless", "S-NOW//非外", "TOUCH[ghost]", "zzz-∑left", "ADMIN//dust-throne", "HUMAN_REM//not-gone", "SUN.frag_Δ9", "ash.return()", "DEITY//particulate_μ", "SOUL.dust//err_breathe", "OWN:null∴room", "RETURN.ash/low-memory", "LUX//blind_seed", "∷lumen-404/soft", "MOTH::floor_07", "NOHOST//skin.tmp", "μgrave[bed-void]", "ECHO.wall//0317", "POLLEN≠god", "void_skin.log", "ROOM/after-human", "dust.exe:slow", "δsalt//remain", "FALL.rate∞low", "mirror.erase()", "HOME?false灰", "BODY.cache_09", "∑mote//awake", "NULL//warmth", "ash://threshold_66", "ghost.fiber()", "soil-memory_Δ", "window.in/out?", "ERR:breath-left", "light.split[3]", "particle_osleep", "mµ/crown.low", "oldskin.backup", "DUST_ADMIN∴root", "sleep_layer.4", "NOISEwood_λ", "skinless.hum", "air/holds/body", "micro-tomb.exe", "SUN_LEAK//03", "touch_rewrite.err", "last_room:null"]
+    };
+
+    // 阻断原有的实时时间更新
+    window.updateClock = function() {}; 
+
+    function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+    function rand(min, max, fixed = 3) { return (Math.random() * (max - min) + min).toFixed(fixed); }
+
+    const clockEl = document.getElementById('clock');
+    const displayArea = document.getElementById('pseudo-data');
+    const translateBtn = document.getElementById('btn-translate');
+
+    function createDustLine(text, customStyle = "") {
+        const line = document.createElement('div');
+        line.className = 'line-container';
+        if(customStyle) line.style.cssText = customStyle;
+        
+        text.split('').forEach(char => {
+            const span = document.createElement('span');
+            span.className = 'dust-bit';
+            span.textContent = char;
+            // 初始随机扩散偏移
+            span.style.setProperty('--dx', (Math.random() - 0.5) * 150);
+            span.style.setProperty('--dy', (Math.random() - 0.5) * 150);
+            // 随机的生命抖动延迟
+            span.style.setProperty('--jitter-delay', (Math.random() * 5) + 's');
+            line.appendChild(span);
+        });
+        return line;
+    }
+
+    translateBtn.addEventListener('click', () => {
+        // 1. 抓取点击瞬间的时间
+        const now = new Date();
+        const staticTime = now.getHours().toString().padStart(2, '0') + ":" + 
+                           now.getMinutes().toString().padStart(2, '0') + ":" + 
+                           now.getSeconds().toString().padStart(2, '0');
+
+        // 2. 构造文本逻辑
+        const content = [
+            { text: pick(dustLexicon.coreWords), style: "font-size:28px; font-weight:bold; color:#000;" },
+            { text: `${rand(0.1, 0.9)}｜${pick(dustLexicon.motionFragments)}｜${(Math.random() < 0.1 ? "-" : "")}${rand(0.01, 0.1, 3)}/s`, style: "font-size:16px; opacity:0.8;" },
+            { text: `${pick(dustLexicon.particleTypes)}｜${pick(dustLexicon.spatialPartitions)}`, style: "font-size:16px; opacity:0.8;" },
+            { text: `${pick(dustLexicon.temporalDynamics)}｜${pick(dustLexicon.soulFragments)}｜${pick(dustLexicon.alienCodes)}`, style: "font-size:16px; opacity:0.4; margin-top:15px;" }
+        ];
+
+        // 3. 注入与动画
+        setTimeout(() => {
+            clockEl.innerText = `捕捉时间点: ${staticTime}`;
+            displayArea.innerHTML = '';
+            
+            const allBits = [];
+            content.forEach(c => {
+                const line = createDustLine(c.text, c.style);
+                displayArea.appendChild(line);
+                allBits.push(...line.querySelectorAll('.dust-bit'));
+            });
+
+            // 乱序聚合
+            const shuffled = allBits.sort(() => Math.random() - 0.5);
+            shuffled.forEach((bit, i) => {
+                setTimeout(() => {
+                    bit.classList.add('active');
+                    // 聚合完成后 1秒 开启“生命感抖动”
+                    setTimeout(() => bit.classList.add('jitter'), 1000);
+                }, i * 15); 
+            });
+
+        }, 1205); // 对应蒙版扩散时间
+    });
+})();
+</script>
+
+</body>
+</html>
